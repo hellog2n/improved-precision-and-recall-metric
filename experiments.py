@@ -11,30 +11,72 @@ import numpy as np
 import os
 import PIL.Image
 from time import time
-
-import dnnlib
+import tensorflow as tf
+# import dnnlib
 from precision_recall import DistanceBlock
 from precision_recall import knn_precision_recall_features
 from precision_recall import ManifoldEstimator
-from utils import initialize_feature_extractor
-from utils import initialize_stylegan
+# from utils import initialize_feature_extractor
+# from utils import initialize_stylegan
+from skimage.transform import resize
+from numpy import asarray
+from tensorflow.python.keras.applications.vgg16 import VGG16
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
 # Helper functions.
 
 def save_image(img_t, filename):
     t = img_t.transpose([1, 2, 0])  # [RGB, H, W] -> [H, W, RGB]
     PIL.Image.fromarray(t.astype(np.uint8), 'RGB').save(filename)
 
+
 def generate_single_image(Gs, latent, truncation, fmt):
-    gen_image = Gs.run(latent, None, truncation_psi=truncation, truncation_cutoff=18, randomize_noise=True, output_transform=fmt)
+    gen_image = Gs.run(latent, None, truncation_psi=truncation, truncation_cutoff=18, randomize_noise=True,
+                       output_transform=fmt)
     gen_image = np.clip(gen_image, 0, 255).astype(np.uint8)
     return gen_image
 
-#----------------------------------------------------------------------------
 
-def compute_stylegan_truncation(datareader, minibatch_size, num_images, truncations,
-                                num_gpus, random_seed, save_txt=None, save_path=None):
+# ----------------------------------------------------------------------------
+def scale_images_GPU(images, new_shape):
+    with tf.device('/job:localhost/replica:0/task:0/device:GPU:0'):
+        images_list = list()
+        for image in images:
+            new_image = resize(image, new_shape, 0)
+            images_list.append(new_image)
+        return asarray(images_list)
+
+
+# from tensorflow.python.keras.applications.vgg16 import VGG16
+size = 32
+model = VGG16(include_top=False, pooling='avg', input_shape=(size, size, 3))
+
+
+def get_features(inputs):
+    """Compose the preprocess_for_inception function with TFGAN run_inception."""
+    inputs = scale_images_GPU(inputs, (size, size, 3))
+    inputs = tf.keras.applications.vgg16.preprocess_input(inputs)
+    return model.predict(inputs)
+
+
+def embed_images_in_VGG16(imgs, batch_size=32):
+    # 이미지를 담을 input_tensor를 선언한다.
+    graph_def = tf.compat.v1.GraphDef()
+    embeddings = []
+    i = 0
+    while i < len(imgs):
+        input_tensor = imgs[i:i + batch_size]
+        feature_tensor = get_features(input_tensor)
+        embeddings.append(feature_tensor)
+        i += batch_size
+    # 해당 경로에서 inception graph를 갖고온다.
+    """Get a GraphDef proto from a disk location."""
+    return np.concatenate(embeddings, axis=0)
+
+
+def compute_stylegan_truncation(ref_features, eval_features, minibatch_size=32, num_images=100, truncations=1.0,
+                                num_gpus=1, save_txt=None, save_path=None):
     """StyleGAN truncation sweep. (Fig. 4)
 
         Args:
@@ -49,49 +91,22 @@ def compute_stylegan_truncation(datareader, minibatch_size, num_images, truncati
 
     """
     print('Running StyleGAN truncation sweep...')
-    rnd = np.random.RandomState(random_seed)
-    fmt = dict(func=dnnlib.tflib.convert_images_to_uint8)
 
-    # Initialize VGG-16.
-    feature_net = initialize_feature_extractor()
+    ref_features = ref_features
+    eval_features = eval_features
 
-    # Initialize StyleGAN generator.
-    Gs = initialize_stylegan()
+    # Calculate k-NN precision and recall.
+    state = knn_precision_recall_features(ref_features, eval_features, num_gpus=num_gpus)
 
-    metric_results = np.zeros([len(truncations), 3], dtype=np.float32)
-    for i, truncation in enumerate(truncations):
-        print('Truncation %g' % truncation)
-        it_start = time()
+    # Store results.
+    metric_results[i, 0] = truncation
+    metric_results[i, 1] = state['precision'][0]
+    metric_results[i, 2] = state['recall'][0]
 
-        # Calculate VGG-16 features for real images.
-        print('Reading real images...')
-        ref_features = np.zeros([num_images, feature_net.output_shape[1]], dtype=np.float32)
-        for begin in range(0, num_images, minibatch_size):
-            end = min(begin + minibatch_size, num_images)
-            real_batch, _ = datareader.get_minibatch_np(end - begin)
-            ref_features[begin:end] = feature_net.run(real_batch, num_gpus=num_gpus, assume_frozen=True)
-
-        # Calculate VGG-16 features for generated images.
-        print('Generating images...')
-        eval_features = np.zeros([num_images, feature_net.output_shape[1]], dtype=np.float32)
-        for begin in range(0, num_images, minibatch_size):
-            end = min(begin + minibatch_size, num_images)
-            latent_batch = rnd.randn(end - begin, *Gs.input_shape[1:])
-            gen_images = Gs.run(latent_batch, None, truncation_psi=truncation, truncation_cutoff=18, randomize_noise=True, output_transform=fmt)
-            eval_features[begin:end] = feature_net.run(gen_images, num_gpus=num_gpus, assume_frozen=True)
-
-        # Calculate k-NN precision and recall.
-        state = knn_precision_recall_features(ref_features, eval_features, num_gpus=num_gpus)
-
-        # Store results.
-        metric_results[i, 0] = truncation
-        metric_results[i, 1] = state['precision'][0]
-        metric_results[i, 2] = state['recall'][0]
-
-        # Print progress.
-        print('Precision: %0.3f' % state['precision'][0])
-        print('Recall: %0.3f' % state['recall'][0])
-        print('Iteration time: %gs\n' % (time() - it_start))
+    # Print progress.
+    print('Precision: %0.3f' % state['precision'][0])
+    print('Recall: %0.3f' % state['recall'][0])
+    print('Iteration time: %gs\n' % (time() - it_start))
 
     # Save results.
     if save_txt:
@@ -101,13 +116,14 @@ def compute_stylegan_truncation(datareader, minibatch_size, num_images, truncati
         np.savetxt(result_file, metric_results, header=header,
                    delimiter=',', comments='')
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
 
 def compute_stylegan_realism(datareader, minibatch_size, num_images, num_gen_images,
                              show_n_images, truncation, num_gpus, random_seed,
                              save_images=False, save_path=None):
     """Calculate realism score for StyleGAN samples. (Fig. 11)
-    
+
         Args:
             datareader (): FFHQ datareader object.
             minibatch_size (int): Minibatch size.
@@ -152,7 +168,8 @@ def compute_stylegan_realism(datareader, minibatch_size, num_images, num_gen_ima
     for begin in range(0, num_gen_images, minibatch_size):
         end = min(begin + minibatch_size, num_gen_images)
         latent_batch = rnd.randn(end - begin, *Gs.input_shape[1:])
-        gen_images = Gs.run(latent_batch, None, truncation_psi=truncation, truncation_cutoff=18, randomize_noise=True, output_transform=fmt)
+        gen_images = Gs.run(latent_batch, None, truncation_psi=truncation, truncation_cutoff=18, randomize_noise=True,
+                            output_transform=fmt)
         fake_features[begin:end] = feature_net.run(gen_images, num_gpus=num_gpus, assume_frozen=True)
         latents[begin:end] = latent_batch
 
@@ -195,4 +212,4 @@ def compute_stylegan_realism(datareader, minibatch_size, num_images, num_gen_ima
 
     print('Done evaluating StyleGAN realism.\n')
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
