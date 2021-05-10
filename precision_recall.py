@@ -12,21 +12,21 @@ import tensorflow as tf
 from time import time
 
 
-# tf.debugging.set_log_device_placement(True)
 # ----------------------------------------------------------------------------
 
 def batch_pairwise_distances(U, V):
     """Compute pairwise distances between two batches of feature vectors."""
-    # Squared norms of each row in U and V.
-    norm_u = tf.reduce_sum(tf.square(U), 1)
-    norm_v = tf.reduce_sum(tf.square(V), 1)
+    with tf.variable_scope('pairwise_dist_block'):
+        # Squared norms of each row in U and V.
+        norm_u = tf.reduce_sum(tf.square(U), 1)
+        norm_v = tf.reduce_sum(tf.square(V), 1)
 
-    # norm_u as a column and norm_v as a row vectors.
-    norm_u = tf.reshape(norm_u, [-1, 1])
-    norm_v = tf.reshape(norm_v, [1, -1])
+        # norm_u as a column and norm_v as a row vectors.
+        norm_u = tf.reshape(norm_u, [-1, 1])
+        norm_v = tf.reshape(norm_v, [1, -1])
 
-    # Pairwise squared Euclidean distances.
-    D = tf.maximum(norm_u - 2 * tf.matmul(U, V, False, True) + norm_v, 0.0)
+        # Pairwise squared Euclidean distances.
+        D = tf.maximum(norm_u - 2 * tf.matmul(U, V, False, True) + norm_v, 0.0)
 
     return D
 
@@ -40,28 +40,20 @@ class DistanceBlock():
         self.num_features = num_features
         self.num_gpus = num_gpus
 
+        # Initialize TF graph to calculate pairwise distances.
         with tf.device('/cpu:0'):
-            # Initialize TF graph to calculate pairwise distances.
-            self._features_batch1 = self.num_features
-            self._features_batch2 = self.num_features
+            self._features_batch1 = tf.placeholder(tf.float16, shape=[None, self.num_features])
+            self._features_batch2 = tf.placeholder(tf.float16, shape=[None, self.num_features])
             features_split2 = tf.split(self._features_batch2, self.num_gpus, axis=0)
             distances_split = []
             for gpu_idx in range(self.num_gpus):
-                with tf.device('/job:localhost/replica:0/task:0/device:GPU:0'):
-                    distances_split.append(batch_pairwise_distances(self._features_batch1, features_split2))
+                with tf.device('/gpu:%d' % gpu_idx):
+                    distances_split.append(batch_pairwise_distances(self._features_batch1, features_split2[gpu_idx]))
             self._distance_block = tf.concat(distances_split, axis=1)
 
     def pairwise_distances(self, U, V):
         """Evaluate pairwise distances between two batches of feature vectors."""
-        self._features_batch1 = U
-        self._features_batch2 = V
-        features_split2 = tf.split(self._features_batch2, self.num_gpus, axis=0)
-        distances_split = []
-        for gpu_idx in range(self.num_gpus):
-            with tf.device('/job:localhost/replica:0/task:0/device:GPU:0'):
-                distances_split.append(batch_pairwise_distances(self._features_batch1, features_split2[0]))
-        self._distance_block = tf.concat(distances_split, axis=1)
-        return self._distance_block
+        return self._distance_block.eval(feed_dict={self._features_batch1: U, self._features_batch2: V})
 
 
 # ----------------------------------------------------------------------------
@@ -162,7 +154,7 @@ class ManifoldEstimator():
 # ----------------------------------------------------------------------------
 
 def knn_precision_recall_features(ref_features, eval_features, nhood_sizes=[3],
-                                  row_batch_size=16, col_batch_size=32, num_gpus=1):
+                                  row_batch_size=25000, col_batch_size=50000, num_gpus=1):
     """Calculates k-NN precision and recall for two sets of feature vectors.
 
         Args:
@@ -173,14 +165,13 @@ def knn_precision_recall_features(ref_features, eval_features, nhood_sizes=[3],
                 (parameter to trade-off between memory usage and performance).
             col_batch_size (int): Column batch size to compute pairwise distances.
             num_gpus (int): Number of GPUs used to evaluate precision and recall.
-
         Returns:
             State (dict): Dict that contains precision and recall calculated from
             ref_features and eval_features.
     """
     state = dict()
-    num_images = 100
-    num_features = ref_features
+    num_images = ref_features.shape[0]
+    num_features = ref_features.shape[1]
 
     # Initialize DistanceBlock and ManifoldEstimators.
     distance_block = DistanceBlock(num_features, num_gpus)
