@@ -12,7 +12,6 @@ import tensorflow as tf
 from time import time
 
 
-# tf.debugging.set_log_device_placement(True)
 # ----------------------------------------------------------------------------
 
 def batch_pairwise_distances(U, V):
@@ -48,7 +47,7 @@ class DistanceBlock():
             distances_split = []
             for gpu_idx in range(self.num_gpus):
                 with tf.device('/job:localhost/replica:0/task:0/device:GPU:0'):
-                    distances_split.append(batch_pairwise_distances(self._features_batch1, features_split2))
+                    distances_split.append(batch_pairwise_distances(self._features_batch1, features_split2[0]))
             self._distance_block = tf.concat(distances_split, axis=1)
 
     def pairwise_distances(self, U, V):

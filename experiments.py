@@ -91,7 +91,8 @@ def compute_stylegan_truncation(ref_features, eval_features, minibatch_size=32, 
 
     """
     print('Running StyleGAN truncation sweep...')
-
+    it_start = time()
+    metric_results = np.zeros([1, 3], dtype=np.float32)
     ref_features = ref_features
     eval_features = eval_features
 
@@ -99,9 +100,9 @@ def compute_stylegan_truncation(ref_features, eval_features, minibatch_size=32, 
     state = knn_precision_recall_features(ref_features, eval_features, num_gpus=num_gpus)
 
     # Store results.
-    metric_results[i, 0] = truncation
-    metric_results[i, 1] = state['precision'][0]
-    metric_results[i, 2] = state['recall'][0]
+    metric_results[0, 0] = 0.0
+    metric_results[0, 1] = state['precision'][0]
+    metric_results[0, 2] = state['recall'][0]
 
     # Print progress.
     print('Precision: %0.3f' % state['precision'][0])
@@ -111,8 +112,8 @@ def compute_stylegan_truncation(ref_features, eval_features, minibatch_size=32, 
     # Save results.
     if save_txt:
         result_path = save_path
-        result_file = os.path.join(result_path, 'stylegan_truncation.txt')
-        header = 'truncation_psi,precision,recall'
+        result_file = os.path.join(result_path, 'Result.txt')
+        header = 'Header,precision,recall'
         np.savetxt(result_file, metric_results, header=header,
                    delimiter=',', comments='')
 

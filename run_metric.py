@@ -44,6 +44,10 @@ def parse_command_line_arguments(args=None):
         epilog='This script can be used to reproduce StyleGAN truncation sweep (Fig. 4) and' \
                ' computing realism score for StyleGAN samples (Fig. 11).')
 
+    # 참고하려는 이미지가 포함되어 있는 Directory Name (필수)
+    parser.add_argument('--save_path', type=str, required=False,
+                        help='텍스트 파일이 저장되는 경로')
+
     parser.add_argument(
         '-d',
         '--data_dir',
@@ -115,21 +119,22 @@ def main(args=None):
     # ref 폴더 경로와 eval 폴더 경로의 절대 경로를 얻는다.
     reference_dir = os.path.abspath(parsed_args.reference_dir)
     eval_dirs = os.path.abspath(parsed_args.eval_dirs)
-
+    save_path = parsed_args.save_path
     ref_features = load_or_generate_embedding(reference_dir)
     eval_features = load_or_generate_embedding(eval_dirs)
-
+    if save_path:
+        save_txt = True
     if parsed_args.realism_score:  # Compute realism score.
         realism_config.datareader = dataset_obj
         compute_stylegan_realism(**realism_config)
 
     if parsed_args.truncation_sweep:  # Compute truncation sweep.
         # truncation_config.datareader = dataset_obj
-        compute_stylegan_truncation(ref_features, eval_features)
+        compute_stylegan_truncation(ref_features, eval_features, save_txt  = save_txt, save_path = save_path)
 
-    peak_gpu_mem_op = tf.contrib.memory_stats.MaxBytesInUse()
-    peak_gpu_mem_usage = peak_gpu_mem_op.eval()
-    print('Peak GPU memory usage: %g GB' % (peak_gpu_mem_usage * 1e-9))
+    #peak_gpu_mem_op = tf.contrib.memory_stats.MaxBytesInUse()
+    #peak_gpu_mem_usage = peak_gpu_mem_op.eval()
+    #print('Peak GPU memory usage: %g GB' % (peak_gpu_mem_usage * 1e-9))
 
 
 # ----------------------------------------------------------------------------
