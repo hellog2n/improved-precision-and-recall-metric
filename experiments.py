@@ -50,10 +50,9 @@ def scale_images_GPU(images, new_shape):
 
 # from tensorflow.python.keras.applications.vgg16 import VGG16
 size = 32
-model = VGG16(include_top=False, pooling='avg', input_shape=(size, size, 3))
+vgg_model = VGG16(include_top=False, pooling='avg', input_shape=(size, size, 3))
 
-
-def get_features(inputs):
+def get_features(inputs, model):
     """Compose the preprocess_for_inception function with TFGAN run_inception."""
     inputs = scale_images_GPU(inputs, (size, size, 3))
     inputs = tf.keras.applications.vgg16.preprocess_input(inputs)
@@ -61,13 +60,22 @@ def get_features(inputs):
 
 
 def embed_images_in_VGG16(imgs, batch_size=32):
+    model = Sequential()
+    for layer in vgg_model.layers[:-1]:
+        model.add(layer)
+    model.layers.pop()
+
+    for layer in model.layers:
+        layer.trainable = False
+    model.summary()
+
     # 이미지를 담을 input_tensor를 선언한다.
     graph_def = tf.compat.v1.GraphDef()
     embeddings = []
     i = 0
     while i < len(imgs):
         input_tensor = imgs[i:i + batch_size]
-        feature_tensor = get_features(input_tensor)
+        feature_tensor = get_features(input_tensor, model=model)
         embeddings.append(feature_tensor)
         i += batch_size
     # 해당 경로에서 inception graph를 갖고온다.
@@ -97,7 +105,7 @@ def compute_stylegan_truncation(ref_features, eval_features, minibatch_size=32, 
     eval_features = eval_features
 
     # Calculate k-NN precision and recall.
-    state = knn_precision_recall_features(ref_features, eval_features, num_gpus=num_gpus)
+    state = knn_precision_recall_features(ref_features, eval_features, num_gpus=num_gpus, nhood_sizes=[3], row_batch_size=25000, col_batch_size=50000)
 
     # Store results.
     metric_results[0, 0] = 0.0

@@ -161,7 +161,7 @@ class ManifoldEstimator():
 # ----------------------------------------------------------------------------
 
 def knn_precision_recall_features(ref_features, eval_features, nhood_sizes=[3],
-                                  row_batch_size=16, col_batch_size=32, num_gpus=1):
+                                  row_batch_size=25000, col_batch_size=50000, num_gpus=1):
     """Calculates k-NN precision and recall for two sets of feature vectors.
 
         Args:
@@ -178,7 +178,7 @@ def knn_precision_recall_features(ref_features, eval_features, nhood_sizes=[3],
             ref_features and eval_features.
     """
     state = dict()
-    num_images = 100
+    num_images = len(ref_features)
     num_features = ref_features
 
     # Initialize DistanceBlock and ManifoldEstimators.
