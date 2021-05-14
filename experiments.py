@@ -48,26 +48,34 @@ def scale_images_GPU(images, new_shape):
         return asarray(images_list)
 
 
-# from tensorflow.python.keras.applications.vgg16 import VGG16
-size = 32
-vgg_model = VGG16(include_top=False, pooling='avg', input_shape=(size, size, 3))
+# VGG Model
+size = 224
+# Default Input Size for VGG : 224*224
+vgg_model = VGG16()
 
 def get_features(inputs, model):
-    """Compose the preprocess_for_inception function with TFGAN run_inception."""
+    """Compose the preprocess"""
+    """ 이미지 리사이즈 64 -> 224"""
     inputs = scale_images_GPU(inputs, (size, size, 3))
     inputs = tf.keras.applications.vgg16.preprocess_input(inputs)
     return model.predict(inputs)
 
 
 def embed_images_in_VGG16(imgs, batch_size=32):
-    model = Sequential()
+
+    # 모델 복사
+    model = tf.keras.Sequential()
     for layer in vgg_model.layers[:-1]:
         model.add(layer)
+
+    # 마지막 레이어 제거 (Classess 1000)
     model.layers.pop()
 
+    # 모든 레이어가 학습되지 않도록 적용
     for layer in model.layers:
         layer.trainable = False
-    model.summary()
+
+    # model.summary()
 
     # 이미지를 담을 input_tensor를 선언한다.
     graph_def = tf.compat.v1.GraphDef()
@@ -83,22 +91,18 @@ def embed_images_in_VGG16(imgs, batch_size=32):
     return np.concatenate(embeddings, axis=0)
 
 
-def compute_stylegan_truncation(ref_features, eval_features, minibatch_size=32, num_images=100, truncations=1.0,
-                                num_gpus=1, save_txt=None, save_path=None):
-    """StyleGAN truncation sweep. (Fig. 4)
+def compute_Precision_and_Recall(ref_features, eval_features, num_gpus=1, save_txt=None, save_path=None):
+    """.
 
         Args:
             datareader (): FFHQ datareader object.
-            minibatch_size (int): Minibatch size.
-            num_images (int): Number of images used to evaluate precision and recall.
-            truncations (list): List of truncation psi values.
             save_txt (string): Name of result file.
             save_path (string): Absolute path to directory where result textfile is saved.
             num_gpus (int): Number of GPUs used.
             random_seed (int): Random seed.
 
     """
-    print('Running StyleGAN truncation sweep...')
+    print('Running ...')
     it_start = time()
     metric_results = np.zeros([1, 3], dtype=np.float32)
     ref_features = ref_features
