@@ -21,7 +21,9 @@ from precision_recall import ManifoldEstimator
 from skimage.transform import resize
 from numpy import asarray
 from tensorflow.python.keras.applications.vgg16 import VGG16
-
+from tensorflow.python.keras.applications.inception_v3 import InceptionV3
+from keras.preprocessing.image import load_img
+from keras.preprocessing.image import img_to_array
 
 # ----------------------------------------------------------------------------
 # Helper functions.
@@ -47,38 +49,94 @@ def scale_images_GPU(images, new_shape):
             images_list.append(new_image)
         return asarray(images_list)
 
+def load_images_from_dir(directory, types=('png', 'jpg', 'bmp', 'gif')):
+    paths = [os.path.join(directory, fn) for fn in os.listdir(directory)
+             if os.path.splitext(fn)[-1][1:] in types]
+    imgs = [load_img(path, target_size=(299, 299)) for path in paths]
+
+    return imgs
+
+def resizeImage(images):
+  images_list = list()
+  with tf.device('/device:GPU:0'):
+    for image in images:
+      # convert the image pixels to a numpy array
+      image = img_to_array(image)
+      # reshape data for the model
+      image = image.reshape((image.shape[0], image.shape[1], image.shape[2]))
+      images_list.append(image)
+  return asarray(images_list)
+
+from sklearn.manifold import TSNE
+from sklearn import decomposition
+import csv
+
+
+def save_embedding_Files(name = "TSNE", fileName, directory):
+    """
+    :param name: "TSNE"
+    :param fileName: 특징이 저장되려는 파일 이름 'vis/~~~.tsv' 로 저장
+    :param directory: 이미지 폴더 위치
+    :return:
+    """
+
+    embeddings = load_or_generate_embedding(directory)
+    pca = decomposition.PCA(n_components=30).fit(embeddings)
+    reduced_X = pca.transform(embeddings)
+    if name == "TSNE":
+        model = TSNE(learning_rate=300)
+        transformed = model.fit_transform(reduced_X)
+
+    with open(fileName, 'w') as fw:
+        csv_writer = csv.writer(fw, delimiter='\t')
+        csv_writer.writerows(transformed)
+
+    return embeddings
+
+
+
+
+imgList = []
+def load_or_generate_embedding(directory):
+    # 디렉토리로부터 이미지를 갖고온다.
+    imgs = load_images_from_dir(directory)
+    imgList = imgs
+    embeddings = generate_embedding(imgs)
+    return embeddings
 
 # VGG Model
-size = 224
+size = 299
 # Default Input Size for VGG : 224*224
 vgg_model = VGG16()
-
-def get_features(inputs, model):
-    """Compose the preprocess"""
-    """ 이미지 리사이즈 64 -> 224"""
-    inputs = scale_images_GPU(inputs, (size, size, 3))
-    inputs = tf.keras.applications.vgg16.preprocess_input(inputs)
-    return model.predict(inputs)
+is_model = InceptionV3(include_top=False, pooling='avg', input_shape=(size, size, 3))
 
 
-def embed_images_in_VGG16(imgs, batch_size=32):
+def get_features(inputs, model, name):
+    with tf.device('/device:GPU:0'):
+      #inputs = scale_images_GPU(inputs, (size, size, 3))
+      inputs = resizeImage(inputs)
+      if name == "VGG16":
+          inputs = tf.keras.applications.vgg16.preprocess_input(inputs)
+      elif name == "InceptionV3":
+          inputs = tf.keras.applications.inceptionV3.preprocess_input(inputs)
+      return model.predict(inputs)
 
-    # 모델 복사
-    model = tf.keras.Sequential()
-    for layer in vgg_model.layers[:-1]:
-        model.add(layer)
-
-    # 마지막 레이어 제거 (Classess 1000)
-    model.layers.pop()
-
-    # 모든 레이어가 학습되지 않도록 적용
-    for layer in model.layers:
-        layer.trainable = False
+def generate_embedding(imgs, batch_size=32, name = "InceptionV3"):
+    if name == "VGG16":
+        # 모델 복사
+        model = tf.keras.Sequential()
+        for layer in vgg_model.layers[:-1]:
+            model.add(layer)
+        # 마지막 레이어 제거 (Classess 1000)
+        model.layers.pop()
+        # 모든 레이어가 학습되지 않도록 적용
+        for layer in model.layers:
+            layer.trainable = False
+    elif name == "InceptionV3":
+        model = is_model
 
     # model.summary()
-
     # 이미지를 담을 input_tensor를 선언한다.
-    graph_def = tf.compat.v1.GraphDef()
     embeddings = []
     i = 0
     while i < len(imgs):
@@ -152,14 +210,14 @@ def compute_stylegan_realism(datareader, minibatch_size, num_images, num_gen_ima
 
     """
     print('Running StyleGAN realism...')
-    rnd = np.random.RandomState(random_seed)
-    fmt = dict(func=dnnlib.tflib.convert_images_to_uint8)
+    #rnd = np.random.RandomState(random_seed)
+    #fmt = dict(func=dnnlib.tflib.convert_images_to_uint8)
 
     # Initialize VGG-16.
-    feature_net = initialize_feature_extractor()
+    #feature_net = initialize_feature_extractor()
 
     # Initialize StyleGAN generator.
-    Gs = initialize_stylegan()
+    #Gs = initialize_stylegan()
 
     # Read real images.
     print('Reading real images...')

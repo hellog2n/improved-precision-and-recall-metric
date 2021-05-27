@@ -80,8 +80,8 @@ def parse_command_line_arguments(args=None):
 
 # ----------------------------------------------------------------------------
 # inceptionV3 모델의 pooling 계층을 이용하여 이미지의 feature를 뽑는다.
-def generate_VGG16_embedding(imgs):
-    return experiments.embed_images_in_VGG16(imgs)
+def generate_embedding(directory):
+    return experiments.save_embedding_Files(directory = directory, fileName = 'vis/inception.tsv')
 
 
 # VGG16을 통해서 임베딩을 한다.
@@ -91,7 +91,7 @@ def load_or_generate_embedding(directory):
 
     # 디렉토리로부터 이미지를 갖고온다.
     imgs = load_images_from_dir(directory)
-    embeddings = generate_VGG16_embedding(imgs)
+    embeddings = generate_embedding(directory)
     return embeddings
 
 
