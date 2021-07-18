@@ -18,13 +18,20 @@ from precision_recall import knn_precision_recall_features
 from precision_recall import ManifoldEstimator
 # from utils import initialize_feature_extractor
 # from utils import initialize_stylegan
-from skimage.transform import resize
-from numpy import asarray
-from tensorflow.python.keras.applications.vgg16 import VGG16
-from tensorflow.python.keras.applications.inception_v3 import InceptionV3
-from keras.preprocessing.image import load_img
-from keras.preprocessing.image import img_to_array
 
+from tensorflow.python.keras.applications.vgg16 import VGG16
+
+import numpy as np
+import torch
+from inceptionModel import InceptionV3
+from torch.nn.functional import adaptive_avg_pool2d
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    # If tqdm is not available, provide a mock version of it
+    def tqdm(x):
+        return x
 # ----------------------------------------------------------------------------
 # Helper functions.
 
@@ -41,55 +48,32 @@ def generate_single_image(Gs, latent, truncation, fmt):
 
 
 # ----------------------------------------------------------------------------
-def scale_images_GPU(images, new_shape):
-    with tf.device('/job:localhost/replica:0/task:0/device:GPU:0'):
-        images_list = list()
-        for image in images:
-            new_image = resize(image, new_shape, 0)
-            images_list.append(new_image)
-        return asarray(images_list)
 
-def load_images_from_dir(directory, types=('png', 'jpg', 'bmp', 'gif')):
-    paths = [os.path.join(directory, fn) for fn in os.listdir(directory)
-             if os.path.splitext(fn)[-1][1:] in types]
-    imgs = [load_img(path, target_size=(299, 299)) for path in paths]
 
-    return imgs
-
-def resizeImage(images):
-  images_list = list()
-  with tf.device('/device:GPU:0'):
-    for image in images:
-      # convert the image pixels to a numpy array
-      image = img_to_array(image)
-      # reshape data for the model
-      image = image.reshape((image.shape[0], image.shape[1], image.shape[2]))
-      images_list.append(image)
-  return asarray(images_list)
 
 from sklearn.manifold import TSNE
 from sklearn import decomposition
 import csv
 
 
-def save_embedding_Files(name = "TSNE", fileName, directory):
+def save_embedding_Files(name = "", fileName, directory, device):
     """
     :param name: "TSNE"
     :param fileName: 특징이 저장되려는 파일 이름 'vis/~~~.tsv' 로 저장
     :param directory: 이미지 폴더 위치
     :return:
     """
+    embeddings = load_or_generate_embedding(dataloader = directory, device= device)
 
-    embeddings = load_or_generate_embedding(directory)
-    pca = decomposition.PCA(n_components=30).fit(embeddings)
+    """pca = decomposition.PCA(n_components=30).fit(embeddings)
     reduced_X = pca.transform(embeddings)
     if name == "TSNE":
         model = TSNE(learning_rate=300)
-        transformed = model.fit_transform(reduced_X)
+        transformed = model.fit_transform(reduced_X)"""
 
-    with open(fileName, 'w') as fw:
+    """with open(fileName, 'w') as fw:
         csv_writer = csv.writer(fw, delimiter='\t')
-        csv_writer.writerows(transformed)
+        csv_writer.writerows(transformed)"""
 
     return embeddings
 
@@ -97,56 +81,38 @@ def save_embedding_Files(name = "TSNE", fileName, directory):
 
 
 imgList = []
-def load_or_generate_embedding(directory):
+def load_or_generate_embedding(dataloader, device):
     # 디렉토리로부터 이미지를 갖고온다.
-    imgs = load_images_from_dir(directory)
-    imgList = imgs
-    embeddings = generate_embedding(imgs)
-    return embeddings
-
-# VGG Model
-size = 299
-# Default Input Size for VGG : 224*224
-vgg_model = VGG16()
-is_model = InceptionV3(include_top=False, pooling='avg', input_shape=(size, size, 3))
-
-
-def get_features(inputs, model, name):
-    with tf.device('/device:GPU:0'):
-      #inputs = scale_images_GPU(inputs, (size, size, 3))
-      inputs = resizeImage(inputs)
-      if name == "VGG16":
-          inputs = tf.keras.applications.vgg16.preprocess_input(inputs)
-      elif name == "InceptionV3":
-          inputs = tf.keras.applications.inceptionV3.preprocess_input(inputs)
-      return model.predict(inputs)
-
-def generate_embedding(imgs, batch_size=32, name = "InceptionV3"):
-    if name == "VGG16":
-        # 모델 복사
-        model = tf.keras.Sequential()
-        for layer in vgg_model.layers[:-1]:
-            model.add(layer)
-        # 마지막 레이어 제거 (Classess 1000)
-        model.layers.pop()
-        # 모든 레이어가 학습되지 않도록 적용
-        for layer in model.layers:
-            layer.trainable = False
-    elif name == "InceptionV3":
-        model = is_model
-
-    # model.summary()
+    # 사용할 차원
+    dims = 2048
     # 이미지를 담을 input_tensor를 선언한다.
+
+    block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
+    model = InceptionV3([block_idx]).to(device)
+    model.eval()
+
     embeddings = []
-    i = 0
-    while i < len(imgs):
-        input_tensor = imgs[i:i + batch_size]
-        feature_tensor = get_features(input_tensor, model=model)
-        embeddings.append(feature_tensor)
-        i += batch_size
-    # 해당 경로에서 inception graph를 갖고온다.
-    """Get a GraphDef proto from a disk location."""
+
+    print(len(dataloader))
+
+    for batch in tqdm(dataloader):
+        batch = batch.to(device)
+        with torch.no_grad():
+            pred = model(batch)[0]
+            # If model output is not scalar, apply global spatial average pooling.
+            # This happens if you choose a dimensionality not equal 2048.
+            if pred.size(2) != 1 or pred.size(3) != 1:
+                pred = adaptive_avg_pool2d(pred, output_size=(1, 1))
+
+        pred = pred.cpu().numpy()
+        b, f, a, d = pred.shape
+        pred = pred.reshape(b, f)
+        embeddings.append(pred)
     return np.concatenate(embeddings, axis=0)
+
+
+
+
 
 
 def compute_Precision_and_Recall(ref_features, eval_features, num_gpus=1, save_txt=None, save_path=None):

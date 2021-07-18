@@ -20,6 +20,29 @@ from experiments import compute_stylegan_realism
 from experiments import compute_stylegan_truncation
 # from utils import init_tf
 import experiments
+import torchvision.transforms as transforms
+import pathlib
+import torch
+from PIL import Image
+
+IMAGE_EXTENSIONS = {'bmp', 'jpg', 'jpeg', 'pgm', 'png', 'ppm',
+                    'tif', 'tiff', 'webp'}
+
+
+class ImagePathDataset(torch.utils.data.Dataset):
+    def __init__(self, files, transforms=None):
+        self.files = files
+        self.transforms = transforms
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, i):
+        path = self.files[i]
+        img = Image.open(path).convert('RGB')
+        if self.transforms is not None:
+            img = self.transforms(img)
+        return img
 
 SAVE_PATH = os.path.dirname(__file__)
 
@@ -80,32 +103,41 @@ def parse_command_line_arguments(args=None):
 
 # ----------------------------------------------------------------------------
 # inceptionV3 모델의 pooling 계층을 이용하여 이미지의 feature를 뽑는다.
-def generate_embedding(directory):
-    return experiments.save_embedding_Files(directory = directory, fileName = 'vis/inception.tsv')
+def generate_embedding(imgs, device):
+    return experiments.save_embedding_Files(fileName='vis/inception.tsv', directory = imgs, device=device)
 
 
 # VGG16을 통해서 임베딩을 한다.
-def load_or_generate_embedding(directory):
+def load_or_generate_embedding(directory, device):
     # hash = hashlib.md5(directory.encode('utf-8')).hexdigest()
     # path = os.path.join(cache_dir, hash + '.npy')
 
     # 디렉토리로부터 이미지를 갖고온다.
     imgs = load_images_from_dir(directory)
-    embeddings = generate_embedding(directory)
+    embeddings = generate_embedding(imgs, device=device)
     return embeddings
 
 
 # 디렉토리로부터 이미지를 갖고온다.
 def load_images_from_dir(directory, types=('png', 'jpg', 'bmp', 'gif')):
-    paths = [os.path.join(directory, fn) for fn in os.listdir(directory)
-             if os.path.splitext(fn)[-1][1:] in types]
-    # images are in [0, 255]
-    imgs = [cv2.cvtColor(cv2.imread(path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
-            for path in paths]
-    return np.array(imgs)
+    directory = pathlib.Path(directory)
+    files = sorted([file for ext in IMAGE_EXTENSIONS
+                    for file in directory.glob('*.{}'.format(ext))])
+    dataset = ImagePathDataset(files, transforms=transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ]))
+    dataloader = torch.utils.data.DataLoader(dataset,
+                                             batch_size=32,
+                                             shuffle=False,
+                                             drop_last=False,
+                                             num_workers=8)
+    print('dataloader', len(dataloader))
+    return dataloader
 
 
 def main(args=None):
+    device = torch.device('cuda' if (torch.cuda.is_available()) else 'cpu')
     # Parse command line arguments.
     parsed_args = parse_command_line_arguments(args)
 
@@ -116,12 +148,13 @@ def main(args=None):
     # init_tf()
     # dataset_obj = load_dataset(tfrecord_dir=parsed_args.data_dir, repeat=True, shuffle_mb=0,
     # prefetch_mb=100, max_label_size='full', verbose=True)
+
     # ref 폴더 경로와 eval 폴더 경로의 절대 경로를 얻는다.
     reference_dir = os.path.abspath(parsed_args.reference_dir)
     eval_dirs = os.path.abspath(parsed_args.eval_dirs)
     save_path = parsed_args.save_path
-    ref_features = load_or_generate_embedding(reference_dir)
-    eval_features = load_or_generate_embedding(eval_dirs)
+    ref_features = load_or_generate_embedding(reference_dir, device)
+    eval_features = load_or_generate_embedding(eval_dirs, device)
     if save_path:
         save_txt = True
     if parsed_args.realism_score:  # Compute realism score.
