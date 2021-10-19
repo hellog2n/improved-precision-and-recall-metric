@@ -56,13 +56,7 @@ from sklearn import decomposition
 import csv
 
 
-def save_embedding_Files(name = "", fileName, directory, device):
-    """
-    :param name: "TSNE"
-    :param fileName: 특징이 저장되려는 파일 이름 'vis/~~~.tsv' 로 저장
-    :param directory: 이미지 폴더 위치
-    :return:
-    """
+def save_embedding_Files(directory, device):
     embeddings = load_or_generate_embedding(dataloader = directory, device= device)
 
     """pca = decomposition.PCA(n_components=30).fit(embeddings)
@@ -115,7 +109,7 @@ def load_or_generate_embedding(dataloader, device):
 
 
 
-def compute_Precision_and_Recall(ref_features, eval_features, num_gpus=1, save_txt=None, save_path=None):
+def compute_Precision_and_Recall(ref_features, eval_features, num_gpus=1, save_txt=None, save_path=None, nhood_sizes = [3]):
     """.
 
         Args:
@@ -133,7 +127,7 @@ def compute_Precision_and_Recall(ref_features, eval_features, num_gpus=1, save_t
     eval_features = eval_features
 
     # Calculate k-NN precision and recall.
-    state = knn_precision_recall_features(ref_features, eval_features, num_gpus=num_gpus, nhood_sizes=[3], row_batch_size=25000, col_batch_size=50000)
+    state = knn_precision_recall_features(ref_features, eval_features, num_gpus=num_gpus, nhood_sizes=nhood_sizes, row_batch_size=25000, col_batch_size=50000)
 
     # Store results.
     metric_results[0, 0] = 0.0
@@ -141,6 +135,7 @@ def compute_Precision_and_Recall(ref_features, eval_features, num_gpus=1, save_t
     metric_results[0, 2] = state['recall'][0]
 
     # Print progress.
+    print('nearest K is %d' % nhood_sizes.shape[0])
     print('Precision: %0.3f' % state['precision'][0])
     print('Recall: %0.3f' % state['recall'][0])
     print('Iteration time: %gs\n' % (time() - it_start))

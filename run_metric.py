@@ -17,7 +17,7 @@ import numpy as np
 # from dnnlib.util import Logger
 # from ffhq_datareader import load_dataset
 from experiments import compute_stylegan_realism
-from experiments import compute_stylegan_truncation
+from experiments import compute_Precision_and_Recall
 # from utils import init_tf
 import experiments
 import torchvision.transforms as transforms
@@ -80,9 +80,9 @@ def parse_command_line_arguments(args=None):
     )
     parser.add_argument(
         '-t',
-        '--truncation_sweep',
+        '--precision_and_recall',
         action='store_true',
-        help='Calculate StyleGAN truncation sweep. Replicates Fig. 4 from the paper.'
+        help='Calculate Improved Precision and Recall.'
     )
     parser.add_argument(
         '-r',
@@ -161,10 +161,13 @@ def main(args=None):
         realism_config.datareader = dataset_obj
         compute_stylegan_realism(**realism_config)
 
-    if parsed_args.truncation_sweep:  # Compute truncation sweep.
-        # truncation_config.datareader = dataset_obj
-        compute_stylegan_truncation(ref_features, eval_features, save_txt  = save_txt, save_path = save_path)
 
+    nearest_k_list = [3, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    if parsed_args.precision_and_recall:  # Compute truncation sweep.
+        # truncation_config.datareader = dataset_obj
+        for nearest_k in nearest_k_list:
+            compute_Precision_and_Recall(ref_features, eval_features, save_txt  = save_txt, save_path = save_path, nhood_sizes=[nearest_k])
+            print('-'*10)
     #peak_gpu_mem_op = tf.contrib.memory_stats.MaxBytesInUse()
     #peak_gpu_mem_usage = peak_gpu_mem_op.eval()
     #print('Peak GPU memory usage: %g GB' % (peak_gpu_mem_usage * 1e-9))
